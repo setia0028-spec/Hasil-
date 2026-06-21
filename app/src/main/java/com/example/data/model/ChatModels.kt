@@ -9,7 +9,10 @@ data class ChatSession(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val title: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val modelName: String = "llama.cpp"
+    val modelName: String = "llama.cpp",
+    val isGroupChat: Boolean = false,
+    val groupAvatar: String = "👥",
+    val participantIds: String = ""
 )
 
 @Entity(tableName = "chat_messages")
@@ -19,7 +22,18 @@ data class ChatMessage(
     val role: String, // "user", "assistant", "system"
     val content: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val senderName: String? = null,
+    val senderEmoji: String? = null
+)
+
+@Entity(tableName = "ai_characters")
+data class AiCharacter(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val personality: String,
+    val emoji: String,
+    val isDefault: Boolean = false
 )
 
 @Entity(tableName = "server_settings")

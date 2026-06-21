@@ -7,10 +7,11 @@ import androidx.room.RoomDatabase
 import com.example.data.model.ChatMessage
 import com.example.data.model.ChatSession
 import com.example.data.model.ServerSetting
+import com.example.data.model.AiCharacter
 
 @Database(
-    entities = [ChatSession::class, ChatMessage::class, ServerSetting::class],
-    version = 1,
+    entities = [ChatSession::class, ChatMessage::class, ServerSetting::class, AiCharacter::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

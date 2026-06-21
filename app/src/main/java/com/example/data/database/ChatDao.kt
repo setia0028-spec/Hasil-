@@ -4,6 +4,7 @@ import androidx.room.*
 import com.example.data.model.ChatMessage
 import com.example.data.model.ChatSession
 import com.example.data.model.ServerSetting
+import com.example.data.model.AiCharacter
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -52,4 +53,23 @@ interface ChatDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSetting(setting: ServerSetting)
+
+    // AI Characters
+    @Query("SELECT * FROM ai_characters ORDER BY isDefault DESC, name ASC")
+    fun getAllCharacters(): Flow<List<AiCharacter>>
+
+    @Query("SELECT * FROM ai_characters WHERE id = :characterId LIMIT 1")
+    suspend fun getCharacterById(characterId: String): AiCharacter?
+
+    @Query("SELECT COUNT(*) FROM ai_characters")
+    suspend fun getCharacterCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCharacter(character: AiCharacter)
+
+    @Update
+    suspend fun updateCharacter(character: AiCharacter)
+
+    @Query("DELETE FROM ai_characters WHERE id = :characterId")
+    suspend fun deleteCharacterById(characterId: String)
 }

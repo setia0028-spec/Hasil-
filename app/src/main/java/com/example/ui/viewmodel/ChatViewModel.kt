@@ -18,6 +18,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val sessions: StateFlow<List<ChatSession>> = repository.allSessions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Characters flow
+    val characters: StateFlow<List<com.example.data.model.AiCharacter>> = repository.allCharacters
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Active session selection
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
@@ -132,8 +136,50 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun createSession() {
         viewModelScope.launch {
             val sessionCount = sessions.value.size
-            val freshSession = repository.createNewSession("Diskusi Baru #${sessionCount + 1}")
+            val freshSession = repository.createNewSession("Diskusi Baru #${sessionCount + 1}", isGroupChat = false)
             _currentSessionId.value = freshSession.id
+        }
+    }
+
+    fun createGroupSession(title: String, groupAvatar: String, participantIds: String) {
+        viewModelScope.launch {
+            val freshSession = repository.createNewSession(
+                title = title.ifBlank { "Group Chat" },
+                isGroupChat = true,
+                groupAvatar = groupAvatar.ifBlank { "👥" },
+                participantIds = participantIds
+            )
+            _currentSessionId.value = freshSession.id
+        }
+    }
+
+    fun updateGroupSession(sessionId: String, title: String, groupAvatar: String, participantIds: String) {
+        viewModelScope.launch {
+            repository.updateSessionDetails(sessionId, title, groupAvatar, participantIds)
+        }
+    }
+
+    fun addCharacter(name: String, emoji: String, personality: String) {
+        viewModelScope.launch {
+            repository.insertCharacter(
+                com.example.data.model.AiCharacter(
+                    name = name,
+                    emoji = emoji,
+                    personality = personality
+                )
+            )
+        }
+    }
+
+    fun updateCharacter(character: com.example.data.model.AiCharacter) {
+        viewModelScope.launch {
+            repository.updateCharacter(character)
+        }
+    }
+
+    fun deleteCharacter(characterId: String) {
+        viewModelScope.launch {
+            repository.deleteCharacterById(characterId)
         }
     }
 
@@ -154,9 +200,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun triggerNextCharacterResponse() {
+        val currentId = _currentSessionId.value ?: return
+        val currentSession = sessions.value.find { it.id == currentId } ?: return
+        if (!currentSession.isGroupChat || _isGenerating.value) return
+
+        viewModelScope.launch {
+            _isGenerating.value = true
+            val mHistory = messages.value
+            val activeIds = currentSession.participantIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val charList = characters.value.filter { activeIds.contains(it.id) }
+            if (charList.isNotEmpty()) {
+                // Try and alternate so the same speaker doesn't speak twice in a row
+                val lastSpeakerName = mHistory.lastOrNull { it.role == "assistant" }?.senderName
+                val nextChar = charList.find { it.name != lastSpeakerName } ?: charList.first()
+
+                val responseMsg = repository.getCharacterCompletion(
+                    sessionId = currentId,
+                    historyMessages = mHistory,
+                    character = nextChar,
+                    temperature = _temperature.value.toDouble(),
+                    maxTokens = _maxTokens.value
+                )
+                repository.addMessage(responseMsg)
+            }
+            _isGenerating.value = false
+        }
+    }
+
     fun sendMessage(inputText: String) {
         if (inputText.isBlank() || _isGenerating.value) return
         val currentId = _currentSessionId.value ?: return
+        val currentSession = sessions.value.find { it.id == currentId } ?: return
 
         viewModelScope.launch {
             _isGenerating.value = true
@@ -169,27 +244,54 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
             repository.addMessage(userMsg)
 
-            // Auto rename title if it was default "Diskusi Baru"
-            val currentSession = sessions.value.find { it.id == currentId }
-            if (currentSession != null && currentSession.title.startsWith("Diskusi Baru")) {
+            // Auto rename title if it was default and not a group chat
+            if (!currentSession.isGroupChat && currentSession.title.startsWith("Diskusi Baru")) {
                 val cleanTitle = if (inputText.length > 25) inputText.take(22) + "..." else inputText
                 repository.updateSessionTitle(currentId, cleanTitle)
             }
 
-            // 2. Fetch full context history
-            val mHistory = messages.value // incorporates the user message just inserted because of the reactive Flow from Room!
-
-            // 3. Request server response
-            val responseMsg = repository.getChatCompletion(
-                sessionId = currentId,
-                historyMessages = mHistory,
-                systemPrompt = _systemPrompt.value,
-                temperature = _temperature.value.toDouble(),
-                maxTokens = _maxTokens.value
-            )
-
-            // 4. Save response to db
-            repository.addMessage(responseMsg)
+            if (currentSession.isGroupChat) {
+                // Filter characters to only include selected participant ids
+                val activeIds = currentSession.participantIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                val charList = characters.value.filter { activeIds.contains(it.id) }
+                if (charList.isNotEmpty()) {
+                    for (char in charList) {
+                        val mHistory = repository.getMessages(currentId).first()
+                        val responseMsg = repository.getCharacterCompletion(
+                            sessionId = currentId,
+                            historyMessages = mHistory,
+                            character = char,
+                            temperature = _temperature.value.toDouble(),
+                            maxTokens = _maxTokens.value
+                        )
+                        repository.addMessage(responseMsg)
+                        // Organic pacing delay
+                        kotlinx.coroutines.delay(1000)
+                    }
+                } else {
+                    // Fallback if no characters exist/are selected
+                    val mHistory = repository.getMessages(currentId).first()
+                    val responseMsg = repository.getChatCompletion(
+                        sessionId = currentId,
+                        historyMessages = mHistory,
+                        systemPrompt = _systemPrompt.value,
+                        temperature = _temperature.value.toDouble(),
+                        maxTokens = _maxTokens.value
+                    )
+                    repository.addMessage(responseMsg)
+                }
+            } else {
+                // Standard single chat
+                val mHistory = repository.getMessages(currentId).first()
+                val responseMsg = repository.getChatCompletion(
+                    sessionId = currentId,
+                    historyMessages = mHistory,
+                    systemPrompt = _systemPrompt.value,
+                    temperature = _temperature.value.toDouble(),
+                    maxTokens = _maxTokens.value
+                )
+                repository.addMessage(responseMsg)
+            }
             _isGenerating.value = false
         }
     }

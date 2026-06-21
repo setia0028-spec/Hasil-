@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.verticalScroll
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.ChatMessage
+import com.example.data.model.AiCharacter
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
@@ -59,6 +61,7 @@ fun ChatScreen(
 
     // ViewModel collected states
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val characters by viewModel.characters.collectAsStateWithLifecycle()
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isGenerating by viewModel.isGenerating.collectAsStateWithLifecycle()
@@ -77,6 +80,19 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSessionsDrawer by remember { mutableStateOf(false) }
+    var showCharactersSheet by remember { mutableStateOf(false) }
+    var showAddEditCharacterDialog by remember { mutableStateOf(false) }
+    var editingCharacter by remember { mutableStateOf<AiCharacter?>(null) }
+    var charName by remember { mutableStateOf("") }
+    var charEmoji by remember { mutableStateOf("🤖") }
+    var charPersonality by remember { mutableStateOf("") }
+
+    // Group dialog configuration states
+    var showGroupSettingsDialog by remember { mutableStateOf(false) }
+    var groupDialogSessionId by remember { mutableStateOf<String?>(null) } // null = Create, otherwise Edit
+    var groupDialogTitle by remember { mutableStateOf("") }
+    var groupDialogAvatar by remember { mutableStateOf("👥") }
+    var groupDialogSelectedParticipants by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     // Floating scroll to bottom indicator
     val showScrollToBottomButton by remember {
@@ -116,24 +132,79 @@ fun ChatScreen(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    Button(
-                        onClick = {
-                            viewModel.createSession()
-                            coroutineScope.launch { drawerState.close() }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BrightCyan,
-                            contentColor = Color.Black
-                        ),
+                    // Dual actions for individual companion vs group conversations
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 16.dp)
-                            .testTag("new_chat_button"),
-                        shape = RoundedCornerShape(12.dp)
+                            .padding(bottom = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = "New Chat")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "+ Mulai Diskusi Baru", fontWeight = FontWeight.SemiBold)
+                        Button(
+                            onClick = {
+                                viewModel.createSession()
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SophisticatedSurface,
+                                contentColor = CyberText
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, SophisticatedBorder),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_chat_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = "New 1-on-1",
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Obrolan 1-on-1",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                groupDialogSessionId = null
+                                groupDialogTitle = ""
+                                groupDialogAvatar = "👥"
+                                groupDialogSelectedParticipants = characters.map { it.id }.toSet()
+                                showGroupSettingsDialog = true
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrightCyan,
+                                contentColor = Color.Black
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_group_chat_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "New Group Chat",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Obrolan Grup",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = CyberGray.copy(alpha = 0.2f), modifier = Modifier.padding(bottom = 12.dp))
@@ -175,12 +246,20 @@ fun ChatScreen(
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Create,
-                                        contentDescription = "Session",
-                                        tint = if (isSelected) NeonCyan else CyberGray,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    if (s.isGroupChat) {
+                                        Text(
+                                            text = s.groupAvatar,
+                                            fontSize = 18.sp,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Create,
+                                            contentDescription = "Session",
+                                            tint = if (isSelected) NeonCyan else CyberGray,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = s.title,
@@ -207,6 +286,29 @@ fun ChatScreen(
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    // Character profiles launcher
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(CyberCard)
+                            .clickable {
+                                showCharactersSheet = true
+                                coroutineScope.launch { drawerState.close() }
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Face, contentDescription = "Characters List", tint = NeonCyan)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(text = "Kelola Karakter AI", color = CyberText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "${characters.size} karakter terdaftar", color = CyberGray, fontSize = 11.sp)
+                        }
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -243,9 +345,20 @@ fun ChatScreen(
                             }
                         },
                         title = {
-                            Column {
+                            Column(
+                                modifier = if (currentSession?.isGroupChat == true) {
+                                    Modifier.clickable {
+                                        groupDialogSessionId = currentSession.id
+                                        groupDialogTitle = currentSession.title
+                                        groupDialogAvatar = currentSession.groupAvatar
+                                        val activeIds = currentSession.participantIds.split(",").map { it.trim() }.toSet()
+                                        groupDialogSelectedParticipants = activeIds
+                                        showGroupSettingsDialog = true
+                                    }
+                                } else Modifier
+                            ) {
                                 Text(
-                                    text = currentSession?.title ?: "Local AI Chat",
+                                    text = if (currentSession?.isGroupChat == true) "${currentSession.groupAvatar} ${currentSession.title}" else (currentSession?.title ?: "Local AI Chat"),
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1
@@ -253,8 +366,7 @@ fun ChatScreen(
                                 Spacer(modifier = Modifier.height(2.dp))
                                 // Connected status indicator
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.clickable { viewModel.checkServerHealth() }
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Box(
                                         modifier = Modifier
@@ -272,34 +384,59 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = when {
+                                            currentSession?.isGroupChat == true -> {
+                                                val activeIds = currentSession.participantIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                                val count = characters.filter { activeIds.contains(it.id) }.size
+                                                "Diskusi Grup ($count AI Aktif)"
+                                            }
                                             useFallbackGemini -> "Gemini API Fallback"
                                             serverHealthStatus == true -> "llama.cpp Online"
                                             serverHealthStatus == false -> "llama.cpp Terputus"
                                             else -> "Mengecek koneksi..."
                                         },
                                         fontSize = 11.sp,
-                                        color = if (serverHealthStatus == false && !useFallbackGemini) ErrorRed else CyberGray
+                                        color = if (serverHealthStatus == false && !useFallbackGemini && currentSession?.isGroupChat != true) ErrorRed else CyberGray
                                     )
-                                    if (isCheckingHealth) {
+                                    if (isCheckingHealth && currentSession?.isGroupChat != true) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         CircularProgressIndicator(
                                             color = NeonCyan,
                                             modifier = Modifier.size(10.dp),
                                             strokeWidth = 1.dp
                                         )
-                                    } else {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = "Refresh",
-                                            tint = CyberGray,
-                                            modifier = Modifier.size(12.dp)
-                                        )
                                     }
                                 }
                             }
                         },
                         actions = {
+                            if (currentSession?.isGroupChat == true) {
+                                IconButton(onClick = {
+                                    groupDialogSessionId = currentSession.id
+                                    groupDialogTitle = currentSession.title
+                                    groupDialogAvatar = currentSession.groupAvatar
+                                    val activeIds = currentSession.participantIds.split(",").map { it.trim() }.toSet()
+                                    groupDialogSelectedParticipants = activeIds
+                                    showGroupSettingsDialog = true
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "Info Grup",
+                                        tint = NeonCyan
+                                    )
+                                }
+                            }
+                            if (currentSession?.isGroupChat == true && messages.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { viewModel.triggerNextCharacterResponse() },
+                                    enabled = !isGenerating
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Picu Dialog",
+                                        tint = if (isGenerating) CyberGray else NeonCyan
+                                    )
+                                }
+                            }
                             if (messages.isNotEmpty()) {
                                 IconButton(onClick = { viewModel.clearActiveSessionMessages() }) {
                                     Icon(
@@ -360,7 +497,7 @@ fun ChatScreen(
                                 Spacer(modifier = Modifier.height(16.dp))
 
                                 Text(
-                                    text = "Chat Server llama.cpp",
+                                    text = if (currentSession?.isGroupChat == true) "Diskusi Grup AI Karakter" else "Chat Server Llama.cpp",
                                     color = NeonCyan,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold
@@ -369,7 +506,11 @@ fun ChatScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 Text(
-                                    text = "Kirim pesan untuk berkomunikasi dengan model AI lokal Anda. Sistem akan menyimpan riwayat diskusi Anda secara lokal di memori HP.",
+                                    text = if (currentSession?.isGroupChat == true) {
+                                        "Kirimkan sebuah topik diskusi! Semua karakter AI terdaftar (${characters.size} AI) akan merumuskan tanggapan unik mereka secara berurutan."
+                                    } else {
+                                        "Kirim pesan untuk berkomunikasi dengan model AI lokal Anda. Sistem akan menyimpan riwayat diskusi Anda secara lokal di memori HP."
+                                    },
                                     color = CyberGray,
                                     fontSize = 13.sp,
                                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -380,19 +521,28 @@ fun ChatScreen(
 
                                 // Suggestion Prompts
                                 Text(
-                                    text = "Rekomendasi Prompt:",
+                                    text = "Rekomendasi Topik Diskusi:",
                                     color = CyberText,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.align(Alignment.Start).padding(start = 12.dp, bottom = 8.dp)
                                 )
 
-                                val promptSuggestions = listOf(
-                                    "Bantu buatkan snippet function Kotlin pencari bilangan prima.",
-                                    "Tulis puisi pendek tentang seekor llama di masa depan cyberpunk.",
-                                    "Terjemahkan ke Bahasa Inggris: 'Saya ingin melatih model AI di laptop saya.'",
-                                    "Berikan saya 3 ide nama unik untuk kedai kopi bernuansa sci-fi."
-                                )
+                                val promptSuggestions = if (currentSession?.isGroupChat == true) {
+                                    listOf(
+                                        "Apa pandangan kalian tentang peradaban manusia 100 tahun ke depan?",
+                                        "Manakah yang lebih penting untuk sukses: Logika ketat atau Kreativitas liar?",
+                                        "Tuliskan naskah panggung komedi singkat antara seorang filsuf dan detektif.",
+                                        "Bagaimanakah definisi kebahagiaan hakiki menurut sudut pandang kalian?"
+                                    )
+                                } else {
+                                    listOf(
+                                        "Bantu buatkan snippet function Kotlin pencari bilangan prima.",
+                                        "Tulis puisi pendek tentang sebuah llama di masa depan cyberpunk.",
+                                        "Terjemahkan ke Bahasa Inggris: 'Saya ingin melatih model AI di laptop saya.'",
+                                        "Berikan saya 3 ide nama unik untuk kedai kopi bernuansa sci-fi."
+                                    )
+                                }
 
                                 Column(
                                     modifier = Modifier.fillMaxWidth(),
@@ -522,9 +672,29 @@ fun ChatScreen(
                                     modifier = Modifier.testTag("send_button")
                                 )
                             }
+                            if (currentSession?.isGroupChat == true && messages.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    AssistChip(
+                                        onClick = { viewModel.triggerNextCharacterResponse() },
+                                        label = { Text("🤖 Biarkan AI Berdialog (Picu Respon Berikutnya)", color = Color.White, fontSize = 11.sp) },
+                                        enabled = !isGenerating,
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = SophisticatedSurface,
+                                            disabledContainerColor = CyberDark,
+                                            labelColor = NeonCyan,
+                                            disabledLabelColor = CyberGray
+                                        ),
+                                        border = if (isGenerating) null else androidx.compose.foundation.BorderStroke(1.dp, NeonCyan.copy(alpha = 0.5f))
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "llama.cpp server: http://127.0.0.1:8080",
+                                text = if (useFallbackGemini) "Layanan Cloud Gemini API Aktif" else "llama.cpp server: $serverUrl",
                                 color = SophisticatedMuted,
                                 fontSize = 10.sp,
                                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -717,6 +887,401 @@ fun ChatScreen(
             }
         )
     }
+
+    // Modal Characters Manager
+    if (showCharactersSheet) {
+        AlertDialog(
+            onDismissRequest = { showCharactersSheet = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Face, contentDescription = "Characters", tint = NeonCyan)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Kelola Karakter AI", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCharactersSheet = false }) {
+                    Text("Selesai", color = NeonCyan, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    editingCharacter = null
+                    charName = ""
+                    charEmoji = "🤖"
+                    charPersonality = ""
+                    showAddEditCharacterDialog = true
+                }) {
+                    Text("+ Karakter Baru", color = BrightCyan)
+                }
+            },
+            containerColor = CyberSurface,
+            titleContentColor = NeonCyan,
+            textContentColor = CyberText,
+            text = {
+                Box(modifier = Modifier.heightIn(max = 350.dp)) {
+                    if (characters.isEmpty()) {
+                        Text("Belum ada karakter yang tersedia.", color = CyberGray, fontSize = 13.sp)
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(characters) { char ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = CyberDark),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, SophisticatedBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(char.emoji, fontSize = 22.sp)
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = char.name,
+                                                    color = CyberText,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp
+                                                )
+                                                if (char.isDefault) {
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Box(
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                            .clip(RoundedCornerShape(4.dp))
+                                                            .background(BrightCyan.copy(alpha = 0.15f))
+                                                    ) {
+                                                        Text("Bawaan", color = NeonCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                            Text(
+                                                text = char.personality,
+                                                color = CyberGray,
+                                                fontSize = 11.sp,
+                                                maxLines = 2,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Row {
+                                            IconButton(
+                                                onClick = {
+                                                    editingCharacter = char
+                                                    charName = char.name
+                                                    charEmoji = char.emoji
+                                                    charPersonality = char.personality
+                                                    showAddEditCharacterDialog = true
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Edit Character",
+                                                    tint = NeonCyan,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            if (!char.isDefault) {
+                                                IconButton(
+                                                    onClick = { viewModel.deleteCharacter(char.id) },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Delete Character",
+                                                        tint = ErrorRed,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // Add / Edit Character Creation Form Dialog
+    if (showAddEditCharacterDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddEditCharacterDialog = false },
+            title = {
+                Text(
+                    text = if (editingCharacter == null) "Buat Karakter Baru" else "Edit Karakter AI",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NeonCyan
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (charName.isBlank() || charPersonality.isBlank()) {
+                            Toast.makeText(context, "Nama dan Kepribadian wajib diisi!", Toast.LENGTH_SHORT).show()
+                            return@TextButton
+                        }
+                        val currentEdit = editingCharacter
+                        if (currentEdit == null) {
+                            viewModel.addCharacter(charName, charEmoji, charPersonality)
+                        } else {
+                            viewModel.updateCharacter(currentEdit.copy(name = charName, emoji = charEmoji, personality = charPersonality))
+                        }
+                        showAddEditCharacterDialog = false
+                    }
+                ) {
+                    Text("Simpan", color = NeonCyan, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddEditCharacterDialog = false }) {
+                    Text("Batal", color = CyberGray)
+                }
+            },
+            containerColor = CyberSurface,
+            titleContentColor = NeonCyan,
+            textContentColor = CyberText,
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Nama Karakter", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                    OutlinedTextField(
+                        value = charName,
+                        onValueChange = { charName = it },
+                        placeholder = { Text("Contoh: Albert Einstein", color = CyberGray.copy(alpha = 0.5f)) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = CyberGray.copy(alpha = 0.4f),
+                            focusedTextColor = CyberText,
+                            unfocusedTextColor = CyberText,
+                            focusedContainerColor = CyberDark,
+                            unfocusedContainerColor = CyberDark
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Avatar Emoji", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                    OutlinedTextField(
+                        value = charEmoji,
+                        onValueChange = { charEmoji = it },
+                        placeholder = { Text("Contoh: 🧙‍♂️", color = CyberGray.copy(alpha = 0.5f)) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = CyberGray.copy(alpha = 0.4f),
+                            focusedTextColor = CyberText,
+                            unfocusedTextColor = CyberText,
+                            focusedContainerColor = CyberDark,
+                            unfocusedContainerColor = CyberDark
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Instruksi Kepribadian (System Prompt)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                    OutlinedTextField(
+                        value = charPersonality,
+                        onValueChange = { charPersonality = it },
+                        placeholder = { Text("Tulis instruksi mendetail bagaimana komputasi karakter ini berbicara...", color = CyberGray.copy(alpha = 0.5f)) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = CyberGray.copy(alpha = 0.4f),
+                            focusedTextColor = CyberText,
+                            unfocusedTextColor = CyberText,
+                            focusedContainerColor = CyberDark,
+                            unfocusedContainerColor = CyberDark
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(110.dp),
+                        maxLines = 4
+                    )
+                }
+            }
+        )
+    }
+
+    // Modal WhatsApp-like AI Group settings
+    if (showGroupSettingsDialog) {
+        val isEditing = groupDialogSessionId != null
+        AlertDialog(
+            onDismissRequest = { showGroupSettingsDialog = false },
+            title = {
+                Text(
+                    text = if (isEditing) "Pengaturan Info Grup AI" else "Buat Grup WhatsApp AI Baru",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NeonCyan
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val finalTitle = groupDialogTitle.ifBlank { "Group Chat" }
+                        val finalAvatar = groupDialogAvatar.ifBlank { "👥" }
+                        val participantString = groupDialogSelectedParticipants.joinToString(",")
+                        
+                        if (isEditing) {
+                            val sId = groupDialogSessionId
+                            if (sId != null) {
+                                viewModel.updateGroupSession(sId, finalTitle, finalAvatar, participantString)
+                            }
+                        } else {
+                            viewModel.createGroupSession(finalTitle, finalAvatar, participantString)
+                        }
+                        showGroupSettingsDialog = false
+                    }
+                ) {
+                    Text(
+                        text = if (isEditing) "Simpan" else "Mulai Chat",
+                        color = NeonCyan,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroupSettingsDialog = false }) {
+                    Text("Batal", color = CyberGray)
+                }
+            },
+            containerColor = CyberSurface,
+            titleContentColor = NeonCyan,
+            textContentColor = CyberText,
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Nama Obrolan Grup", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                    OutlinedTextField(
+                        value = groupDialogTitle,
+                        onValueChange = { groupDialogTitle = it },
+                        placeholder = { Text("Contoh: Para Pemikir Ulung", color = CyberGray.copy(alpha = 0.5f)) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = CyberGray.copy(alpha = 0.4f),
+                            focusedTextColor = CyberText,
+                            unfocusedTextColor = CyberText,
+                            focusedContainerColor = CyberDark,
+                            unfocusedContainerColor = CyberDark
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Ikon Avatar Grup (Emoji)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = groupDialogAvatar,
+                            onValueChange = { groupDialogAvatar = it },
+                            placeholder = { Text("👥", color = CyberGray.copy(alpha = 0.5f)) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = NeonCyan,
+                                unfocusedBorderColor = CyberGray.copy(alpha = 0.4f),
+                                focusedTextColor = CyberText,
+                                unfocusedTextColor = CyberText,
+                                focusedContainerColor = CyberDark,
+                                unfocusedContainerColor = CyberDark
+                            ),
+                            singleLine = true,
+                            modifier = Modifier.width(60.dp)
+                        )
+                        
+                        // Selectable Emoji shortcuts
+                        val quickEmojis = listOf("👥", "💬", "🤖", "🏛️", "🕵️‍♂️", "🤡", "💻", "🚀", "🔥")
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            items(quickEmojis) { emoji ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (groupDialogAvatar == emoji) BrightCyan.copy(alpha = 0.2f) else CyberDark)
+                                        .border(
+                                            1.dp,
+                                            if (groupDialogAvatar == emoji) NeonCyan else SophisticatedBorder,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { groupDialogAvatar = emoji },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(emoji, fontSize = 16.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Pilih Anggota Grup (Siapa yang Masuk)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NeonCyan
+                    )
+
+                    Box(modifier = Modifier.heightIn(max = 180.dp)) {
+                        if (characters.isEmpty()) {
+                            Text("Belum ada karakter tersedia. Buat karakter di menu samping terlebih dahulu.", color = CyberGray, fontSize = 12.sp)
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(characters) { char ->
+                                    val isSelected = groupDialogSelectedParticipants.contains(char.id)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSelected) SophisticatedSurface.copy(alpha = 0.3f) else Color.Transparent)
+                                            .clickable {
+                                                groupDialogSelectedParticipants = if (isSelected) {
+                                                    groupDialogSelectedParticipants - char.id
+                                                } else {
+                                                    groupDialogSelectedParticipants + char.id
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(char.emoji, fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(char.name, color = CyberText, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text(char.personality, color = CyberGray, fontSize = 10.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                        }
+                                        Checkbox(
+                                            checked = isSelected,
+                                            onCheckedChange = { checked ->
+                                                groupDialogSelectedParticipants = if (checked) {
+                                                    groupDialogSelectedParticipants + char.id
+                                                } else {
+                                                    groupDialogSelectedParticipants - char.id
+                                                }
+                                            },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = NeonCyan,
+                                                uncheckedColor = CyberGray,
+                                                checkmarkColor = Color.Black
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -733,7 +1298,7 @@ fun MessageBubble(
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (!isUser) {
-            // Llama or Gemini Avatar icon
+            // Llama, Gemini or Character Avatar icon
             Box(
                 modifier = Modifier
                     .size(32.dp)
@@ -742,12 +1307,19 @@ fun MessageBubble(
                     .padding(4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (message.isError) Icons.Default.Info else Icons.Default.Face,
-                    contentDescription = "Bot Avatar",
-                    tint = Color.Black,
-                    modifier = Modifier.size(18.dp)
-                )
+                if (message.senderEmoji != null) {
+                    Text(
+                        text = message.senderEmoji,
+                        fontSize = 16.sp
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (message.isError) Icons.Default.Info else Icons.Default.Face,
+                        contentDescription = "Bot Avatar",
+                        tint = Color.Black,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
             Spacer(modifier = Modifier.width(8.dp))
         }
@@ -758,7 +1330,13 @@ fun MessageBubble(
         ) {
             // Sender name block
             Text(
-                text = if (isUser) "Anda" else if (message.isError) "System Error" else "Asisten AI",
+                text = if (isUser) {
+                    "Anda"
+                } else if (message.isError) {
+                    "System Error"
+                } else {
+                    message.senderName ?: "Asisten AI"
+                },
                 color = if (isUser) NeonCyan else if (message.isError) ErrorRed else CyberGray,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,

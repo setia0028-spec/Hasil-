@@ -48,19 +48,92 @@ class ChatRepository(private val context: Context) {
     // Flow getters
     val allSessions: Flow<List<ChatSession>> = chatDao.getAllSessions()
 
+    val allCharacters: Flow<List<com.example.data.model.AiCharacter>> = chatDao.getAllCharacters()
+
     fun getMessages(sessionId: String): Flow<List<ChatMessage>> = chatDao.getMessagesForSession(sessionId)
 
     // Database interactions
-    suspend fun createNewSession(title: String): ChatSession = withContext(Dispatchers.IO) {
-        val session = ChatSession(title = title)
+    suspend fun createNewSession(
+        title: String,
+        isGroupChat: Boolean = false,
+        groupAvatar: String = "👥",
+        participantIds: String = ""
+    ): ChatSession = withContext(Dispatchers.IO) {
+        val session = ChatSession(
+            title = title,
+            isGroupChat = isGroupChat,
+            groupAvatar = groupAvatar,
+            participantIds = participantIds
+        )
         chatDao.insertSession(session)
         session
+    }
+
+    // AI Characters CRUD
+    suspend fun seedDefaultCharactersIfNeeded() = withContext(Dispatchers.IO) {
+        if (chatDao.getCharacterCount() == 0) {
+            val defaults = listOf(
+                com.example.data.model.AiCharacter(
+                    name = "Socrates",
+                    emoji = "🏛️",
+                    personality = "Kamu adalah Socrates, filsuf Yunani kuno. Jawab pertanyaan dengan metode Sokrates (bertanya balik dengan bijaksana untuk memancing pemikiran mendalam), ramah tapi memancing rasa ingin tahu, gunakan bahasa Indonesia kuno yang sopan.",
+                    isDefault = true
+                ),
+                com.example.data.model.AiCharacter(
+                    name = "Sherlock Holmes",
+                    emoji = "🕵️‍♂️",
+                    personality = "Kamu adalah Sherlock Holmes, detektif legendaris. Jawab secara analitis, tajam, dingin, suka mengamati detail kecil yang dilewatkan orang lain, dan skeptis.",
+                    isDefault = true
+                ),
+                com.example.data.model.AiCharacter(
+                    name = "Komedian Jenaka",
+                    emoji = "🤡",
+                    personality = "Kamu adalah komedian yang selalu ceria dan suka membuat lelucon atau plesetan kata (pun) dalam bahasa Indonesia. Semua jawabanmu harus diselingi humor cerdas.",
+                    isDefault = true
+                ),
+                com.example.data.model.AiCharacter(
+                    name = "Cyberpunk Hacker",
+                    emoji = "💻",
+                    personality = "Kamu adalah hacker elite dari masa depan distopia. Gaya bicaramu penuh istilah teknologi, sering menyisipkan glitch, keren, misterius, dan solutif.",
+                    isDefault = true
+                )
+            )
+            defaults.forEach { chatDao.insertCharacter(it) }
+        }
+    }
+
+    suspend fun insertCharacter(character: com.example.data.model.AiCharacter) = withContext(Dispatchers.IO) {
+        chatDao.insertCharacter(character)
+    }
+
+    suspend fun updateCharacter(character: com.example.data.model.AiCharacter) = withContext(Dispatchers.IO) {
+        chatDao.updateCharacter(character)
+    }
+
+    suspend fun deleteCharacterById(characterId: String) = withContext(Dispatchers.IO) {
+        chatDao.deleteCharacterById(characterId)
     }
 
     suspend fun updateSessionTitle(sessionId: String, newTitle: String) = withContext(Dispatchers.IO) {
         val session = chatDao.getSessionById(sessionId)
         if (session != null) {
             chatDao.insertSession(session.copy(title = newTitle))
+        }
+    }
+
+    suspend fun updateSessionDetails(
+        sessionId: String,
+        newTitle: String,
+        newAvatar: String,
+        newParticipantIds: String
+    ) = withContext(Dispatchers.IO) {
+        val session = chatDao.getSessionById(sessionId)
+        if (session != null) {
+            chatDao.insertSession(session.copy(
+                title = newTitle,
+                groupAvatar = newAvatar,
+                participantIds = newParticipantIds
+            ))
         }
     }
 
@@ -127,6 +200,43 @@ class ChatRepository(private val context: Context) {
             // Use Llama.cpp
             return@withContext callLlama(serverUrl, historyMessages, systemPrompt, temperature, maxTokens)
         }
+    }
+
+    private fun formatHistoryForGroup(historyMessages: List<ChatMessage>): List<ChatMessage> {
+        return historyMessages.map { msg ->
+            if (msg.role == "assistant" && msg.senderName != null) {
+                msg.copy(content = "[${msg.senderEmoji ?: ""} ${msg.senderName}]: ${msg.content}")
+            } else if (msg.role == "user") {
+                msg.copy(content = "[User]: ${msg.content}")
+            } else {
+                msg
+            }
+        }
+    }
+
+    suspend fun getCharacterCompletion(
+        sessionId: String,
+        historyMessages: List<ChatMessage>,
+        character: com.example.data.model.AiCharacter,
+        temperature: Double,
+        maxTokens: Int
+    ): ChatMessage = withContext(Dispatchers.IO) {
+        val useFallback = getSetting("use_fallback_gemini", "false").toBoolean()
+        val serverUrl = getSetting("server_url", "http://10.0.2.2:8080")
+
+        val formattedHistory = formatHistoryForGroup(historyMessages)
+        val systemPromptCombine = "Personality: ${character.personality}\n\nYou are locked in a group chat named \"Group AI Diskusi\" with other AI characters. Respond creatively as ${character.name} ${character.emoji} to the conversation flow/most recent message. Keep responses concise, natural, and under 5 sentences. Speak in Indonesian."
+
+        val responseMsg = if (useFallback) {
+            callGemini(formattedHistory, systemPromptCombine)
+        } else {
+            callLlama(serverUrl, formattedHistory, systemPromptCombine, temperature, maxTokens)
+        }
+
+        responseMsg.copy(
+            senderName = character.name,
+            senderEmoji = character.emoji
+        )
     }
 
     private suspend fun callLlama(
